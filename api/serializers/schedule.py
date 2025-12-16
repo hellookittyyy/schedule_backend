@@ -41,7 +41,7 @@ class SemesterSerializer(serializers.ModelSerializer):
         semester = super().create(validated_data)
 
         if config:
-            semester.synchronize_slots(config)
+            semester.synchronize_slots()
             
         return semester
 
