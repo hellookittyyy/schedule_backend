@@ -66,12 +66,20 @@ class ScheduleGenerator:
 
             created_count = 0
             unassigned_count = 0
+            max_iterations = 0
+            
+            if not sorted_plans:
+                 max_iterations = 0
+            else:
+                 max_iterations = max(p.amount for p in sorted_plans)
 
-            for plan_idx, plan in enumerate(sorted_plans, 1):
-                target_name = plan.group.name if plan.group else (plan.stream.name if plan.stream else "Unknown")
-                self.log(f"[{plan_idx}/{len(sorted_plans)}] Processing: {plan.subject.name} ({plan.class_type.name}) -> {target_name}")
+            for i in range(max_iterations):
+                for plan in sorted_plans:
+                    if i >= plan.amount:
+                        continue
 
-                for i in range(plan.amount):
+                    target_name = plan.group.name if plan.group else (plan.stream.name if plan.stream else "Unknown")
+
                     try:
                         slot = None
                         room = None
@@ -90,9 +98,8 @@ class ScheduleGenerator:
                                     room=None,
                                     is_locked=False
                                 )
-                                self.log(f"   Warning: No slot found for lesson {i+1}. Added to Unassigned.")
+                                self.log(f"Warning: No slot found for {target_name} (lesson {i+1}). Added to Unassigned.")
                                 unassigned_count += 1
-                                
                     except Exception as e:
                         self.log(f"Error processing lesson: {str(e)}")
                         try:
