@@ -31,6 +31,7 @@ class ScheduleGenerator:
         self.memory_schedule = defaultdict(list)
         self.logs = []
         self.plans_map = {}
+        self.time_slots_cache = {}  # Кеш таймслотів для швидшого доступу
 
     def log(self, message):
         print(message)
@@ -60,6 +61,9 @@ class ScheduleGenerator:
             time_slots = list(TimeSlot.objects.filter(
                 semester=self.semester, is_available=True
             ).order_by("date", "period_number"))
+            
+            # Заповнюємо кеш таймслотів
+            self.time_slots_cache = {ts.id: ts for ts in time_slots}
             
             if not time_slots:
                 return {"success": False, "error": "No time slots found"}
@@ -212,13 +216,68 @@ class ScheduleGenerator:
         scheduled = self.memory_schedule.get(slot.id, [])
         occupied_ids = {item["room_id"] for item in scheduled}
         needed_cap = plan.target_audience_size
-
+        
+        # Збираємо всі підходящі аудиторії
+        available_rooms = []
         for room in rooms:
-            if plan.required_room_type and room.room_type != plan.required_room_type: continue
-            if room.capacity < needed_cap: continue
-            if room.id in occupied_ids: continue
-            return room
-        return None
+            if plan.required_room_type and room.room_type != plan.required_room_type: 
+                continue
+            if room.capacity < needed_cap: 
+                continue
+            if room.id in occupied_ids: 
+                continue
+            
+            # Перевіряємо обмеження для цієї аудиторії
+            if not self.check_room_constraints(room, slot):
+                continue
+            
+            available_rooms.append(room)
+        
+        if not available_rooms:
+            return None
+        
+        # Вибираємо аудиторію з найменшою займаністю (для рівномірного розподілу)
+        # Лічимо, скільки уроків вже в цій аудиторії в поточний день
+        room_usage_count = {}
+        for room in available_rooms:
+            count = 0
+            # Лічимо з пам'яті
+            for slot_id, items in self.memory_schedule.items():
+                slot_from_cache = self.time_slots_cache.get(slot_id)
+                if slot_from_cache and slot_from_cache.date == slot.date:
+                    count += sum(1 for item in items if item.get("room_id") == room.id)
+            room_usage_count[room.id] = count
+        
+        # Вибираємо аудиторію з найменшою займаністю
+        least_used_room = min(available_rooms, key=lambda r: room_usage_count[r.id])
+        return least_used_room
+    
+    def check_room_constraints(self, room, slot):
+        """Перевіряє обмеження для конкретної аудиторії"""
+        for c in self.constraints:
+            if not c.room_id or c.room_id != room.id:
+                continue
+            
+            cfg = c.configuration
+            ctype = cfg.get("type")
+            
+            if ctype == "max_daily_lessons":
+                limit = cfg.get("value", 4)
+                
+                # Лічимо уроки з бази даних
+                query = Lesson.objects.filter(time_slot__date=slot.date, room_id=room.id)
+                existing_count = query.count()
+                
+                # Додаємо уроки з пам'яті
+                for slot_id, items in self.memory_schedule.items():
+                    slot_from_cache = self.time_slots_cache.get(slot_id)
+                    if slot_from_cache and slot_from_cache.date == slot.date:
+                        existing_count += sum(1 for item in items if item.get("room_id") == room.id)
+                
+                if existing_count >= limit:
+                    return False
+        
+        return True
 
     def check_availability(self, plan, slot):
         items = self.memory_schedule.get(slot.id, [])
@@ -237,6 +296,7 @@ class ScheduleGenerator:
         applicable = []
         for c in self.constraints:
             is_relevant = False
+            # Обмеження для аудиторії НЕ перевіряються тут (вони обробляються в find_free_room)
             if c.group_id and c.group_id == plan.group_id: is_relevant = True
             elif c.teacher_id and c.teacher_id == plan.teacher_id: is_relevant = True
             elif c.stream_id and c.stream_id == plan.stream_id: is_relevant = True
@@ -260,21 +320,48 @@ class ScheduleGenerator:
             if ctype == "max_daily_lessons":
                 limit = cfg.get("value", 4)
                 
-                count = 0
-                target_ids = []
-                if plan.group: target_ids.append(plan.group.id)
-                if plan.stream: target_ids.extend([g.id for g in plan.stream.groups.all()])
-                
-                for s_id, items in self.memory_schedule.items():
-                    pass
-
                 query = Q(time_slot__date=slot.date)
-                if plan.group:
-                    query &= (Q(study_plan__group=plan.group) | Q(study_plan__stream__groups=plan.group))
-                elif plan.teacher:
-                    query &= Q(study_plan__teacher=plan.teacher)
                 
+                # Обмеження для конкретної аудиторії
+                if c.room_id:
+                    query &= Q(room_id=c.room_id)
+                # Обмеження для викладача
+                elif c.teacher_id:
+                    query &= Q(study_plan__teacher_id=c.teacher_id)
+                # Обмеження для групи
+                elif c.group_id:
+                    query &= (Q(study_plan__group_id=c.group_id) | Q(study_plan__stream__groups__id=c.group_id))
+                # Обмеження для потоку
+                elif c.stream_id:
+                    query &= Q(study_plan__stream_id=c.stream_id)
+                
+                # Лічимо уроки з бази даних
                 existing_count = Lesson.objects.filter(query).count()
+                
+                # Додаємо уроки з пам'яті (які щойно були створені в цей день)
+                for slot_id, items in self.memory_schedule.items():
+                    # Отримуємо дату слота з пам'яті або з бази
+                    try:
+                        slot_date = self.time_slots_cache.get(slot_id).date if hasattr(self, 'time_slots_cache') else TimeSlot.objects.get(id=slot_id).date
+                    except:
+                        continue
+                    
+                    if slot_date == slot.date:
+                        for item in items:
+                            # Перевіряємо відповідність обмеженню
+                            should_count = False
+                            if c.room_id and item.get("room_id") == c.room_id:
+                                should_count = True
+                            elif c.teacher_id and item.get("teacher_id") == c.teacher_id:
+                                should_count = True
+                            elif c.group_id and (item.get("group_id") == c.group_id or c.group_id in item.get("stream_group_ids", [])):
+                                should_count = True
+                            elif c.stream_id and item.get("stream_id") == c.stream_id:
+                                should_count = True
+                            
+                            if should_count:
+                                existing_count += 1
+                
                 if existing_count >= limit:
                     return False
 
