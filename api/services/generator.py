@@ -31,6 +31,7 @@ class ScheduleGenerator:
         self.memory_schedule = defaultdict(list)
         self.logs = []
         self.plans_map = {}
+        self.locked_counts = defaultdict(int)
         self.time_slots_cache = {}  # Кеш таймслотів для швидшого доступу
 
     def log(self, message):
@@ -52,10 +53,25 @@ class ScheduleGenerator:
                 .prefetch_related("stream__groups") 
             )
             self.plans_map = {p.id: p for p in plans}
-            
+
+            # Враховуємо вже закріплені(locked) пари — зменшуємо кількість для планів
+            for p in plans:
+                locked = self.locked_counts.get(p.id, 0)
+                if locked:
+                    try:
+                        original_amount = p.amount
+                        p.amount = max(0, p.amount - locked)
+                        self.log(f"Adjusted plan {p.id} amount: {original_amount} -> {p.amount} due to {locked} locked lessons")
+                    except Exception:
+                        pass
+
+            # Фільтруємо плани, у яких вже немає уроків для розміщення
+            plans = [p for p in plans if getattr(p, 'amount', 0) > 0]
+            self.plans_map = {p.id: p for p in plans}
+
             if not plans:
                 return {"success": False, "error": "No study plans found"}
-            
+
             sorted_plans = self.sort_plans(plans)
 
             time_slots = list(TimeSlot.objects.filter(
@@ -141,6 +157,10 @@ class ScheduleGenerator:
         locked = Lesson.objects.filter(study_plan__semester=self.semester, is_locked=True)
         for l in locked:
             self.register_memory(l.study_plan, l.time_slot, l.room)
+            try:
+                self.locked_counts[l.study_plan.id] += 1
+            except Exception:
+                pass
 
     def register_memory(self, plan, slot, room):
         self.memory_schedule[slot.id].append({
