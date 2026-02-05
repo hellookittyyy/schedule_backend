@@ -13,6 +13,12 @@ class StudyPlanSerializer(serializers.ModelSerializer):
     stream_name = serializers.CharField(source='stream.name', read_only=True)
     class_type_name = serializers.CharField(source='class_type.name', read_only=True)
     room_type_name = serializers.CharField(source='required_room_type.name', read_only=True)
+    
+    course_number = serializers.IntegerField(
+        write_only=True, 
+        required=False,
+        help_text="Номер курсу (1-6) для масового створення StudyPlan для всіх груп цього курсу"
+    )
 
     class Meta:
         model = StudyPlan
@@ -26,15 +32,18 @@ class StudyPlanSerializer(serializers.ModelSerializer):
             'required_room_type', 'room_type_name',
             'duration',
             'amount',
-            'constraints'
+            'constraints',
+            'course_number'  
         ]
 
     def validate(self, data):
-        """
-        Validate business logic:
-        1. Teacher qualification.
-        2. XOR Logic for Group vs Stream.
-        """
+        # Видалити course_number з data, щоб не передавати в модель
+        course_number = data.pop('course_number', None)
+        
+        # Якщо є course_number - то це масове створення, пропустити стандартну валідацію
+        if course_number is not None:
+            return data
+        
         # 1. Teacher Qualification
         teacher = data.get('teacher')
         subject = data.get('subject')
@@ -54,14 +63,7 @@ class StudyPlanSerializer(serializers.ModelSerializer):
         group = data.get('group')
         stream = data.get('stream')
         
-        # Note: We need to be careful with partial updates. 
-        # If updating, we should check the final state.
         if self.instance:
-            # If 'group' is not in data, use instance.group (unless explicit None passed?)
-            # DRF validation typically passes provided data.
-            # Let's rely on model.clean() but implementing it here gives better API errors.
-            
-            # Explicitly checking what is provided in 'data' vs what is in 'instance'
             current_group = data['group'] if 'group' in data else self.instance.group
             current_stream = data['stream'] if 'stream' in data else self.instance.stream
         else:
