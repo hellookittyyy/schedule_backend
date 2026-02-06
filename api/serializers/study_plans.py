@@ -17,6 +17,7 @@ class StudyPlanSerializer(serializers.ModelSerializer):
     course_number = serializers.IntegerField(
         write_only=True, 
         required=False,
+        allow_null=True,
         help_text="Номер курсу (1-6) для масового створення StudyPlan для всіх груп цього курсу"
     )
 
