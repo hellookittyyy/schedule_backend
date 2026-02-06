@@ -33,6 +33,8 @@ class ScheduleGenerator:
         self.plans_map = {}
         self.locked_counts = defaultdict(int)
         self.time_slots_cache = {}  # Кеш таймслотів для швидшого доступу
+        self.day_load = defaultdict(int) 
+        self.daily_limit = 100 # Default safe value
 
     def log(self, message):
         print(message)
@@ -93,6 +95,14 @@ class ScheduleGenerator:
             else:
                  max_iterations = max(p.amount for p in sorted_plans)
 
+            total_lessons = sum(max(1, p.amount) for p in sorted_plans)
+            unique_dates = {ts.date for ts in time_slots}
+            total_days_slots = len(unique_dates) if unique_dates else 1
+            
+            import math
+            self.daily_limit = math.ceil(total_lessons / total_days_slots)
+            self.log(f"Daily balance limit set to: {self.daily_limit} (Lessons: {total_lessons}, Days: {total_days_slots})")
+
             for i in range(max_iterations):
                 for plan in sorted_plans:
                     if i >= plan.amount:
@@ -105,7 +115,14 @@ class ScheduleGenerator:
                         room = None
                         
                         with transaction.atomic():
-                            slot, room = self.find_and_assign_slot(plan, time_slots)
+                            # 1. First Pass: Strict Limit
+                            slot, room = self.find_and_assign_slot(plan, time_slots, check_limit=True)
+
+                            # 2. Soft Fallback: Ignore Limit if failed
+                            if not slot:
+                                 # Optional logger for debug
+                                 # self.log(f"Fallback for {plan.id} lesson {i+1}")
+                                 slot, room = self.find_and_assign_slot(plan, time_slots, check_limit=False)
                             
                             if slot and room:
                                 Lesson.objects.create(study_plan=plan, time_slot=slot, room=room)
@@ -171,6 +188,7 @@ class ScheduleGenerator:
             "room_id": room.id if room else None,
             "stream_group_ids": [g.id for g in plan.stream.groups.all()] if plan.stream else []
         })
+        self.day_load[slot.date] += 1 # Increment daily load
 
     def sort_plans(self, plans):
         leaders_ids = set()
@@ -201,13 +219,27 @@ class ScheduleGenerator:
 
         return sorted(plans, key=sort_key)
 
-    def find_and_assign_slot(self, plan, time_slots):
+    def find_and_assign_slot(self, plan, time_slots, check_limit=True):
         print(f"DEBUG: Plan ID={plan.id}, Type='{plan.class_type.name}'")
         is_current_plan_exam = "екзамен" in plan.class_type.name.lower() or "exam" in plan.class_type.name.lower()
         
         follower_config = self.get_follower_config(plan.id)
 
+        # Retrieve last assigned date for this plan, if any
+        last_date = None
+        for slot_id, items in self.memory_schedule.items():
+            for item in items:
+                if item["plan_id"] == plan.id:
+                    slot_from_cache = self.time_slots_cache.get(slot_id)
+                    if slot_from_cache:
+                        if last_date is None or slot_from_cache.date > last_date:
+                            last_date = slot_from_cache.date
+
         for idx, slot in enumerate(time_slots):
+            # Daily Limit Check
+            if check_limit and self.day_load[slot.date] >= self.daily_limit:
+                continue
+
             if is_current_plan_exam:
                 if not self.check_exam_day_limit(plan, slot):
                     continue
