@@ -22,12 +22,18 @@ class StudyPlanViewSet(viewsets.ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         course_number = request.data.get('course_number')
+        group = request.data.get('group')
+        stream = request.data.get('stream')
         
-        # Якщо є course_number - виконати масове створення
+        # Якщо вказана група або потік - це створення для конкретного об'єкта, ігноруємо course_number
+        if group or stream:
+            return super().create(request, *args, **kwargs)
+
+        # Якщо є course_number і немає групи/потоку - виконати масове створення
         if course_number is not None:
             return self._create_for_course(request, course_number)
         
-        # Інакше - стандартне створення
+        # Інакше - стандартне створення (яке впаде з помилкою валідації, що ок)
         return super().create(request, *args, **kwargs)
     
     def _create_for_course(self, request, course_number):
