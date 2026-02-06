@@ -42,3 +42,4 @@ python manage.py runserver
 
 ### Для графічного відображення необхідне також клонування та запуск репозиторію schedule_frontend
 
+# Deploy test
