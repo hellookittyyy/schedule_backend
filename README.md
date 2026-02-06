@@ -6,6 +6,11 @@ git clone https://github.com/hellookittyyy/schedule_backend.git
 cd schedule_backend
 ```
 
+### 1.1 Створення env файлу
+```
+Створіть файл .env скопіювавши .env.example та змінивши налаштування на локальні.
+```
+
 ### 2. Налаштування віртуального середовища (venv)
 
 **Для Windows:**
