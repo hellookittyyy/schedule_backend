@@ -316,8 +316,12 @@ class ScheduleGenerator:
             if ctype == "max_daily_lessons":
                 limit = cfg.get("value", 4)
                 
-                # Лічимо уроки з бази даних
-                query = Lesson.objects.filter(time_slot__date=slot.date, room_id=room.id)
+                # Лічимо уроки з бази даних (тільки для поточного семестру)
+                query = Lesson.objects.filter(
+                    time_slot__date=slot.date, 
+                    room_id=room.id,
+                    study_plan__semester=self.semester
+                )
                 existing_count = query.count()
                 
                 # Додаємо уроки з пам'яті
@@ -372,7 +376,7 @@ class ScheduleGenerator:
             if ctype == "max_daily_lessons":
                 limit = cfg.get("value", 4)
                 
-                query = Q(time_slot__date=slot.date)
+                query = Q(time_slot__date=slot.date, study_plan__semester=self.semester)
                 
                 # Обмеження для конкретної аудиторії
                 if c.room_id:
@@ -433,7 +437,8 @@ class ScheduleGenerator:
             return True
 
         lessons_on_date = Lesson.objects.filter(
-            time_slot__date=slot.date
+            time_slot__date=slot.date,
+            study_plan__semester=self.semester
         ).select_related('study_plan', 'study_plan__group', 'study_plan__stream', 'study_plan__class_type')
 
         for lesson in lessons_on_date:
