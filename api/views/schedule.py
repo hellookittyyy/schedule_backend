@@ -34,6 +34,25 @@ class SemesterViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(semester)
             return Response(serializer.data)
         return Response({'detail': 'No semesters found'}, status=status.HTTP_404_NOT_FOUND)
+        
+    @action(detail=True, methods=['post'])
+    def sync_slots(self, request, pk=None):
+        semester = self.get_object()
+        
+        # Перевірка на наявність розкладу, щоб не видалити випадково
+        force = request.data.get('force_delete', False)
+        if not force and Lesson.objects.filter(study_plan__semester=semester).exists():
+            return Response({"detail": "Розклад вже існує"}, status=409)
+
+        try:
+            # Якщо підтверджено видалення — чистимо розклад
+            if force:
+                Lesson.objects.filter(study_plan__semester=semester, is_locked=False).delete()
+                
+            semester.synchronize_slots()
+            return Response({'status': 'success', 'created': semester.timeslots.count()})
+        except Exception as e:
+            return Response({'detail': str(e)}, status=400)
 
 class TimeSlotViewSet(viewsets.ModelViewSet):
     queryset = TimeSlot.objects.all()

@@ -30,42 +30,76 @@ class Semester(models.Model):
         verbose_name = "Семестр"
         verbose_name_plural = "Семестри"
     
-    def synchronize_slots(self):
-        config = self.configuration or {}
-        period_times = config.get('period_times', {
-            "1": {"start": "08:30", "end": "09:50"},
-            "2": {"start": "10:10", "end": "11:30"},
-            "3": {"start": "11:50", "end": "13:10"},
-            "4": {"start": "13:30", "end": "14:50"},
-        })
-        max_periods = config.get('max_periods_per_day', 4)
-        exclude_days = config.get('exclude_days', [6, 7])
+    def synchronize_slots(self, force_delete=False):
+        # 1. Гнучке зчитування: шукаємо або в корені, або в generation_config
+        config = self.configuration
+        if 'generation_config' in config:
+            config = config['generation_config']
+            
+        # Check for existing lessons
+        existing_lessons = Lesson.objects.filter(time_slot__semester=self)
+        if existing_lessons.exists():
+            if not force_delete:
+                raise ValueError("Розклад вже існує. Використовуйте force_delete=True для перезапису.")
+            else:
+                existing_lessons.filter(is_locked=False).delete()
+
+        time_schedule = config.get('time_schedule', [])
+        weekends = config.get('weekends', [])
+
+        # 2. Мапінг днів тижня
+        day_map = {
+            "Monday": 1, "Tuesday": 2, "Wednesday": 3, "Thursday": 4,
+            "Friday": 5, "Saturday": 6, "Sunday": 7
+        }
+        exclude_days = [day_map[day] for day in weekends if day in day_map]
 
         valid_slot_ids = []
         current_date = self.start_date
         
-        while current_date <= self.end_date:
-            day_of_week = current_date.isoweekday()
-            
-            if day_of_week not in exclude_days:
-                for p_num in range(1, max_periods + 1):
-                    times = period_times.get(str(p_num), {"start": "00:00", "end": "00:00"})
-                    
-                    slot, _ = TimeSlot.objects.update_or_create(
-                        semester=self,
-                        date=current_date,
-                        period_number=p_num,
-                        defaults={
-                            'start_time': times['start'],
-                            'end_time': times['end'],
-                        }
-                    )
-                    slot.save()
-                    valid_slot_ids.append(slot.id)
-            
-            current_date += timedelta(days=1)
+        with transaction.atomic():
+            while current_date <= self.end_date:
+                day_of_week = current_date.isoweekday()
+                
+                if day_of_week not in exclude_days:
+                    # Динамічно створюємо стільки пар, скільки в масиві
+                    for p_num, times in enumerate(time_schedule, start=1):
+                        start_t, end_t = times
+                        
+                        try:
+                            slot, _ = TimeSlot.objects.update_or_create(
+                                semester=self,
+                                date=current_date,
+                                period_number=p_num,
+                                defaults={
+                                    'start_time': start_t,
+                                    'end_time': end_t,
+                                    'is_available': True
+                                }
+                            )
+                            valid_slot_ids.append(slot.id)
+                        except TimeSlot.MultipleObjectsReturned:
+                            # Conflict resolution: delete duplicates and recreate
+                            TimeSlot.objects.filter(
+                                semester=self,
+                                date=current_date,
+                                period_number=p_num
+                            ).delete()
+                            
+                            slot = TimeSlot.objects.create(
+                                semester=self,
+                                date=current_date,
+                                period_number=p_num,
+                                start_time=start_t,
+                                end_time=end_t,
+                                is_available=True
+                            )
+                            valid_slot_ids.append(slot.id)
+                
+                current_date += timedelta(days=1)
 
-        TimeSlot.objects.filter(semester=self).exclude(id__in=valid_slot_ids).delete()
+            # Видаляємо старі слоти, якщо кількість пар зменшилась
+            TimeSlot.objects.filter(semester=self).exclude(id__in=valid_slot_ids).delete()
 
 
 class TimeSlot(models.Model):
@@ -121,6 +155,7 @@ class TimeSlot(models.Model):
         verbose_name = "Часовий слот"
         verbose_name_plural = "Часові слоти"
         ordering = ['date', 'start_time']
+        unique_together = ['semester', 'date', 'period_number']
         indexes = [
             models.Index(fields=['semester', 'week_type', 'day_of_week', 'period_number']),
         ]
