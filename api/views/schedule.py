@@ -74,7 +74,15 @@ class SemesterConstraintViewSet(viewsets.ModelViewSet):
     filterset_fields = ['semester', 'teacher', 'group', 'stream', 'room', 'is_active']
 
 class LessonViewSet(viewsets.ModelViewSet):
-    queryset = Lesson.objects.all()
+    queryset = Lesson.objects.select_related(
+        'time_slot',
+        'room',
+        'study_plan__subject',
+        'study_plan__teacher',
+        'study_plan__group',
+        'study_plan__stream',
+        'study_plan__class_type',
+    )
     serializer_class = LessonSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['study_plan', 'time_slot', 'room', 'is_locked']

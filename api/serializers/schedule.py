@@ -26,7 +26,10 @@ class StudyPlanDepthSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = StudyPlan
-        fields = ['id', 'subject', 'teacher', 'group', 'stream', 'class_type', 'duration']
+        fields = [
+            'id', 'subject', 'teacher', 'group', 'stream', 'class_type', 'duration',
+            'group_id', 'stream_id', 'teacher_id', 'subject_id', 'class_type_id',
+        ]
 
 
 def normalize_semester_config(config):
