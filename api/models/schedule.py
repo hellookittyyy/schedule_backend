@@ -66,35 +66,17 @@ class Semester(models.Model):
                     for p_num, times in enumerate(time_schedule, start=1):
                         start_t, end_t = times
                         
-                        try:
-                            slot, _ = TimeSlot.objects.update_or_create(
-                                semester=self,
-                                date=current_date,
-                                period_number=p_num,
-                                defaults={
-                                    'start_time': start_t,
-                                    'end_time': end_t,
-                                    'is_available': True
-                                }
-                            )
-                            valid_slot_ids.append(slot.id)
-                        except TimeSlot.MultipleObjectsReturned:
-                            # Conflict resolution: delete duplicates and recreate
-                            TimeSlot.objects.filter(
-                                semester=self,
-                                date=current_date,
-                                period_number=p_num
-                            ).delete()
-                            
-                            slot = TimeSlot.objects.create(
-                                semester=self,
-                                date=current_date,
-                                period_number=p_num,
-                                start_time=start_t,
-                                end_time=end_t,
-                                is_available=True
-                            )
-                            valid_slot_ids.append(slot.id)
+                        slot, _ = TimeSlot.objects.update_or_create(
+                            semester=self,
+                            date=current_date,
+                            period_number=p_num,
+                            defaults={
+                                'start_time': start_t,
+                                'end_time': end_t,
+                                'is_available': True
+                            }
+                        )
+                        valid_slot_ids.append(slot.id)
                 
                 current_date += timedelta(days=1)
 
