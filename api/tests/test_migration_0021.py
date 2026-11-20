@@ -122,14 +122,14 @@ class Migration0021Tests(TransactionTestCase):
                 'weekends': [],
             },
         )
-        kept = TimeSlot.objects.create(
+        low = TimeSlot.objects.create(
             semester=semester,
             date=date(2026, 9, 1),
             period_number=1,
             start_time=time(8, 30),
             end_time=time(9, 50),
         )
-        copy = TimeSlot.objects.create(
+        high = TimeSlot.objects.create(
             semester=semester,
             date=date(2026, 9, 1),
             period_number=1,
@@ -142,15 +142,15 @@ class Migration0021Tests(TransactionTestCase):
         room_r2 = _make_historical_room(self.old_apps, room_type, 'R2')
         plan = _make_historical_plan(self.old_apps, semester)
 
-        # Kept slot має більше занять (4 проти 3), тому правило «найбільше
-        # занять» визначає, який слот лишити; room R зайнята саме тут.
-        kept_r = Lesson.objects.create(study_plan=plan, time_slot=kept, room=room_r)
-        kept_unplaced = [
-            Lesson.objects.create(study_plan=plan, time_slot=kept) for _ in range(3)
+        # Обидва слоти однакові за (date, period, start_time), тому міграція
+        # лишає той, де більше занять. Тут це high, хоча його id більший:
+        # нижчий id має лише 2 заняття проти 3.
+        low_clash = Lesson.objects.create(study_plan=plan, time_slot=low, room=room_r)
+        low_movable = Lesson.objects.create(study_plan=plan, time_slot=low, room=room_r2)
+        high_with_r = Lesson.objects.create(study_plan=plan, time_slot=high, room=room_r)
+        high_unplaced = [
+            Lesson.objects.create(study_plan=plan, time_slot=high) for _ in range(2)
         ]
-        clash = Lesson.objects.create(study_plan=plan, time_slot=copy, room=room_r)
-        movable = Lesson.objects.create(study_plan=plan, time_slot=copy, room=room_r2)
-        no_room = Lesson.objects.create(study_plan=plan, time_slot=copy)
 
         self._migrate_forward()
 
@@ -158,12 +158,12 @@ class Migration0021Tests(TransactionTestCase):
             semester_id=semester.pk, date=date(2026, 9, 1), period_number=1
         )
         self.assertEqual(remaining.count(), 1)
-        self.assertEqual(remaining.get().pk, kept.pk)
+        self.assertEqual(remaining.get().pk, high.pk)
+        self.assertFalse(TimeSlot.objects.filter(pk=low.pk).exists())
 
-        self.assertEqual(Lesson.objects.count(), 7)
-        self.assertIsNone(Lesson.objects.get(pk=clash.pk).time_slot_id)
-        self.assertEqual(Lesson.objects.get(pk=movable.pk).time_slot_id, kept.pk)
-        self.assertEqual(Lesson.objects.get(pk=no_room.pk).time_slot_id, kept.pk)
-        self.assertEqual(Lesson.objects.get(pk=kept_r.pk).time_slot_id, kept.pk)
-        for lesson in kept_unplaced:
-            self.assertEqual(Lesson.objects.get(pk=lesson.pk).time_slot_id, kept.pk)
+        self.assertEqual(Lesson.objects.count(), 5)
+        self.assertIsNone(Lesson.objects.get(pk=low_clash.pk).time_slot_id)
+        self.assertEqual(Lesson.objects.get(pk=low_movable.pk).time_slot_id, high.pk)
+        self.assertEqual(Lesson.objects.get(pk=high_with_r.pk).time_slot_id, high.pk)
+        for lesson in high_unplaced:
+            self.assertEqual(Lesson.objects.get(pk=lesson.pk).time_slot_id, high.pk)

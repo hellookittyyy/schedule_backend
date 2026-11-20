@@ -64,7 +64,7 @@ def make_teacher(name='Іваненко І. І.', subjects=()):
 
 
 def make_class_type(name='Лекція'):
-    return ClassType.objects.create(name=name)
+    return ClassType.objects.get_or_create(name=name)[0]
 
 
 def make_room_type(name='Лекційна'):

@@ -95,7 +95,7 @@ class StudyPlanIdPayloadTests(LessonFilterTests):
 
 
 class ForGroupTests(LessonFilterTests):
-    def test_for_group_returns_own_and_stream_lessons_without_duplicates(self):
+    def test_for_group_returns_own_and_stream_lessons(self):
         semester = self.make_semester_with_slots()
         slots = self.slots(semester)
         group = make_group(name='КН-3')
@@ -113,8 +113,6 @@ class ForGroupTests(LessonFilterTests):
         ids = self.get_ids({'for_group': group.id})
 
         self.assertEqual(ids, sorted([own_lesson.id, stream_lesson.id]))
-        self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(len(ids), 2)
 
     def test_same_name_streams_do_not_leak(self):
         semester = self.make_semester_with_slots()
@@ -165,6 +163,31 @@ class TeacherFilterTests(LessonFilterTests):
 
         by_id = self.get_ids({'teacher_id': short_name.id})
         self.assertEqual(by_id, [short_lesson.id])
+
+
+class StreamFilterTests(LessonFilterTests):
+    def test_stream_id_matches_only_that_streams_plans(self):
+        semester = self.make_semester_with_slots()
+        slots = self.slots(semester)
+        group_a = make_group(name='КН-8')
+        group_b = make_group(name='КН-9')
+        stream_a = make_stream(name='Потік A', groups=[group_a])
+        stream_b = make_stream(name='Потік B', groups=[group_b])
+
+        group_plan = make_study_plan(semester, group=group_a)
+        stream_a_plan = make_study_plan(semester, stream=stream_a)
+        stream_b_plan = make_study_plan(semester, stream=stream_b)
+
+        group_lesson = make_lesson(group_plan, time_slot=slots[0])
+        stream_a_lesson = make_lesson(stream_a_plan, time_slot=slots[1])
+        stream_b_lesson = make_lesson(stream_b_plan, time_slot=slots[2])
+
+        ids = self.get_ids({'stream_id': stream_a.id})
+
+        self.assertEqual(ids, [stream_a_lesson.id])
+        self.assertIn(stream_a_lesson.id, ids)
+        self.assertNotIn(group_lesson.id, ids)
+        self.assertNotIn(stream_b_lesson.id, ids)
 
 
 class LessonQueryCountTests(LessonFilterTests):

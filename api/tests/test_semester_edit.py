@@ -1,6 +1,7 @@
 """Semester edit with an existing schedule: re-sync rules, 409 and forced delete."""
 
 from datetime import date
+from unittest.mock import patch
 
 from rest_framework.test import APITestCase
 
@@ -141,6 +142,8 @@ class SemesterEditTests(APITestCase):
         response = self.client.put(f'/api/semesters/{semester.pk}/', payload, format='json')
 
         self.assertEqual(response.status_code, 200, response.content)
+        semester.refresh_from_db()
+        self.assertEqual(semester.configuration.get('dates_excluded'), ['2026-09-02'])
         self.assertEqual(self.slot_ids(semester), slots_before)
         self.assertEqual(Lesson.objects.count(), 1)
         self.assertEqual(Lesson.objects.get().time_slot_id, slot.pk)
@@ -174,6 +177,11 @@ class SemesterEditTests(APITestCase):
         semester = self.make_semester_with_slots()
         plan = self.make_plan(semester)
         make_lesson(plan, time_slot=semester.timeslots.first())
+        make_lesson(
+            plan,
+            time_slot=semester.timeslots.filter(period_number=2).first(),
+            is_locked=True,
+        )
 
         payload = self.full_payload(
             semester,
@@ -184,8 +192,10 @@ class SemesterEditTests(APITestCase):
         response = self.client.put(f'/api/semesters/{semester.pk}/', payload, format='json')
 
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.data['deleted_lessons'], 1)
-        self.assertEqual(Lesson.objects.count(), 0)
+        self.assertEqual(response.data['deleted_lessons'], 2)
+        self.assertEqual(
+            Lesson.objects.filter(study_plan__semester=semester).count(), 0
+        )
 
         semester.refresh_from_db()
         self.assertEqual(semester.start_date, NEW_START)
@@ -263,3 +273,21 @@ class SemesterEditTests(APITestCase):
         self.assertEqual(response.data['code'], 'schedule_exists')
         self.assertEqual(self.slot_ids(semester), slots_before)
         self.assertEqual(self.lesson_state(), lessons_before)
+
+    def test_sync_slots_maps_model_value_error_to_409(self):
+        semester = self.make_semester_with_slots()
+
+        # Pre-check бачить порожній розклад, тож ValueError приходить саме з
+        # моделі — перевіряємо мапінг винятку у відповідь 409.
+        with patch.object(
+            Semester, 'synchronize_slots', side_effect=ValueError('boom')
+        ):
+            response = self.client.post(
+                f'/api/semesters/{semester.pk}/sync_slots/',
+                {'force_delete': True},
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(response.data['code'], 'schedule_exists')
+        self.assertEqual(response.data['detail'], 'boom')
