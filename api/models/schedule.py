@@ -32,20 +32,12 @@ class Semester(models.Model):
     
     def synchronize_slots(self, force_delete=False):
         # 1. Гнучке зчитування: шукаємо або в корені, або в generation_config
-        config = self.configuration
+        config = self.configuration or {}
         if 'generation_config' in config:
-            config = config['generation_config']
-            
-        # Check for existing lessons
-        existing_lessons = Lesson.objects.filter(time_slot__semester=self)
-        if existing_lessons.exists():
-            if not force_delete:
-                raise ValueError("Розклад вже існує. Використовуйте force_delete=True для перезапису.")
-            else:
-                existing_lessons.filter(is_locked=False).delete()
+            config = config['generation_config'] or {}
 
-        time_schedule = config.get('time_schedule', [])
-        weekends = config.get('weekends', [])
+        time_schedule = config.get('time_schedule') or []
+        weekends = config.get('weekends') or []
 
         # 2. Мапінг днів тижня
         day_map = {
@@ -54,18 +46,27 @@ class Semester(models.Model):
         }
         exclude_days = [day_map[day] for day in weekends if day in day_map]
 
-        valid_slot_ids = []
-        current_date = self.start_date
-        
         with transaction.atomic():
+            # Перевірка на наявність розкладу, щоб не видалити випадково
+            existing_lessons = Lesson.objects.filter(study_plan__semester=self)
+            if existing_lessons.exists():
+                if not force_delete:
+                    raise ValueError(
+                        "Розклад вже існує. Використовуйте force_delete=True для перезапису."
+                    )
+                existing_lessons.filter(is_locked=False).delete()
+
+            valid_slot_ids = []
+            current_date = self.start_date
+
             while current_date <= self.end_date:
                 day_of_week = current_date.isoweekday()
-                
+
                 if day_of_week not in exclude_days:
                     # Динамічно створюємо стільки пар, скільки в масиві
                     for p_num, times in enumerate(time_schedule, start=1):
                         start_t, end_t = times
-                        
+
                         slot, _ = TimeSlot.objects.update_or_create(
                             semester=self,
                             date=current_date,
@@ -77,11 +78,14 @@ class Semester(models.Model):
                             }
                         )
                         valid_slot_ids.append(slot.id)
-                
+
                 current_date += timedelta(days=1)
 
-            # Видаляємо старі слоти, якщо кількість пар зменшилась
-            TimeSlot.objects.filter(semester=self).exclude(id__in=valid_slot_ids).delete()
+            # Видаляємо старі слоти, якщо кількість пар зменшилась.
+            # Закріплені заняття на них не видаляємо, а знімаємо зі слота.
+            stale_slots = TimeSlot.objects.filter(semester=self).exclude(id__in=valid_slot_ids)
+            Lesson.objects.filter(time_slot__in=stale_slots, is_locked=True).update(time_slot=None)
+            stale_slots.delete()
 
 
 class TimeSlot(models.Model):

@@ -38,21 +38,27 @@ class SemesterViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def sync_slots(self, request, pk=None):
         semester = self.get_object()
-        
+        force = bool(request.data.get('force_delete', False))
+
         # Перевірка на наявність розкладу, щоб не видалити випадково
-        force = request.data.get('force_delete', False)
         if not force and Lesson.objects.filter(study_plan__semester=semester).exists():
-            return Response({"detail": "Розклад вже існує"}, status=409)
+            return Response(
+                {
+                    "detail": "Розклад вже існує. Підтвердіть видалення розкладу.",
+                    "code": "schedule_exists",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         try:
-            # Якщо підтверджено видалення — чистимо розклад
-            if force:
-                Lesson.objects.filter(study_plan__semester=semester, is_locked=False).delete()
-                
-            semester.synchronize_slots()
-            return Response({'status': 'success', 'created': semester.timeslots.count()})
-        except Exception as e:
-            return Response({'detail': str(e)}, status=400)
+            semester.synchronize_slots(force_delete=force)
+        except ValueError as e:
+            return Response(
+                {"detail": str(e), "code": "schedule_exists"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response({'status': 'success', 'created': semester.timeslots.count()})
 
 class TimeSlotViewSet(viewsets.ModelViewSet):
     queryset = TimeSlot.objects.all()
