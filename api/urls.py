@@ -17,6 +17,8 @@ router.register(r'rooms', RoomViewSet, basename='room')
 router.register(r'room_types', RoomTypeViewSet, basename='room_type')
 router.register(r'semesters', SemesterViewSet, basename='semester')
 router.register(r'timeslots', TimeSlotViewSet, basename='timeslot')
+router.register(r'class_types', ClassTypeViewSet, basename='class_type')
+# Alias kept for existing clients; separate basename keeps reverse() unambiguous.
 router.register(r'class-types', ClassTypeViewSet, basename='classtype')
 router.register(r'study_plans', StudyPlanViewSet, basename='studyplan')
 router.register(r'semester_constraints', SemesterConstraintViewSet, basename='semesterconstraint')
