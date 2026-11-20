@@ -5,7 +5,7 @@
 | Status | Draft 2026-11-20 — not started |
 | Repo | `schedule_backend` (Django + DRF), baseline `2b6cd1a` + untracked `api/migrations/0020_add_class_types.py` |
 | Source | Open items (a)–(e) of frontend plan [`schedule_frontend/docs/plans/0001-mosaic-redesign.md`](../../../schedule_frontend/docs/plans/0001-mosaic-redesign.md) §10 «Not done / open» |
-| Deploy | Push to `main` → `.github/workflows/deploy.yml` (`git reset --hard`, `pip install`, `migrate`, restart). Every merged phase goes live, so work goes on a branch. |
+| Scope | **Local only.** Work and test against the local backend and `db.sqlite3`. Production is very old and out of scope: it will be updated in full once all the work is done. Push to `main` deploys (`.github/workflows/deploy.yml`), so work stays on branch `api-redesign-gaps` and nothing is pushed to `main`. |
 
 ## 1. Goal
 
@@ -31,7 +31,7 @@ Found along the way:
 
 ## 3. Decisions
 
-1. **Additive API.** New filters and new `*_id` fields. Old names (`group_id`, `teacher_name`, `class-types`, name strings in `study_plan_details`) stay, so the deployed frontend keeps working before its follow-up ships.
+1. **Additive API.** New filters and new `*_id` fields. Old names (`group_id`, `teacher_name`, `class-types`, name strings in `study_plan_details`) stay, so the local frontend keeps working before its follow-up ships.
 2. **Conflict status for blocked deletes and blocked edits is 409** with a JSON body `{"detail": "<Ukrainian message>", "code": "<machine code>"}`. The frontend already reads `detail` (`assets/js/api.js`) and already branches on 409 for semesters.
 3. **Semester edit with an existing schedule** (confirmed by the user 2026-11-20):
    - Re-sync slots only when `start_date`, `end_date` or the generation config actually changed. A name-only edit or an `is_current` change never touches the schedule.
@@ -50,7 +50,7 @@ Each phase is one PR into `main` with tests. Phases 1–4 do not depend on each 
   1. `RunPython` dedupe: for each `(semester, date, period_number)` group with more than one slot, keep the slot with the most lessons (tie → lowest id). Move the other slots' lessons to it. If a moved lesson would break `Lesson.unique_together (room, time_slot)`, set its `time_slot` to `NULL` (unplaced) instead of deleting it. Then delete the empty duplicates. Log the counts. Reverse: no-op.
   2. `AlterUniqueTogether(name='timeslot', unique_together={('semester', 'date', 'period_number')})`.
   - Remove the `MultipleObjectsReturned` branch from `synchronize_slots()`. It can no longer happen, and it deleted lessons.
-  - Before the deploy: run the duplicate query on the production DB (`SELECT semester_id, date, period_number, COUNT(*) FROM api_timeslot GROUP BY 1,2,3 HAVING COUNT(*) > 1`) and take a DB backup. `deploy.yml` runs `migrate` on push.
+  - Back up the local `db.sqlite3` before applying it. The duplicate check is `SELECT semester_id, date, period_number, COUNT(*) FROM api_timeslot GROUP BY 1,2,3 HAVING COUNT(*) > 1`; run it again when production is updated later (out of scope here).
   - Test: two duplicate slots with lessons, including a room clash → after migrating, one slot remains, no lesson is deleted, and the clashing lesson is unplaced.
 - Test scaffold: `api/tests/` package with `APITestCase` and small factories (semester with config, group, stream, teacher, subject, class type, room type, room, study plan, lesson). Run with `python manage.py test api`.
 
@@ -102,7 +102,7 @@ Each phase is one PR into `main` with tests. Phases 1–4 do not depend on each 
 
 **Done when:** `GET /api/lessons/?for_group=N&date_from=…&date_to=…` returns everything the public page shows for group N in one request.
 
-## 5. Frontend follow-up (separate change in `schedule_frontend`, after each phase is deployed)
+## 5. Frontend follow-up (separate change in `schedule_frontend`, after each phase works locally)
 
 - Phase 1: drop the `/class_types/` fallback comment and the 5-type fallback in `admin/study-plans/study-plan.js`. Keep a graceful error.
 - Phase 2: `admin/rooms` room-type delete can show `errText(err)` directly. Remove the HTML-500 special case.
@@ -112,11 +112,11 @@ Each phase is one PR into `main` with tests. Phases 1–4 do not depend on each 
 
 ## 6. Open questions for the user
 
-1. Is the production DB in the same state as local (class types present, 0019 applied)? `deploy.yml` runs `migrate` on every push, so committing 0020 applies it there too.
+None. (Production state was resolved 2026-11-20: out of scope, updated in full after the work is done.)
 
 ## 7. Risks
 
-- **Deploy on push to `main`**: each phase goes live at once, with `migrate`. Only phase 0 has migrations: `0020` (data only) and `0021` (dedupe + unique constraint; back up the production DB first).
+- **Accidental deploy**: a push to `main` deploys with `migrate`. Keep all work on `api-redesign-gaps` and never push it to `main` until production is updated in full. Only phase 0 has migrations: `0020` (data only) and `0021` (dedupe + unique constraint; back up the local DB first).
 - **Frontend contract**: all changes are additive. The one behaviour change is a name-only semester edit, which no longer rebuilds slots. Today such an edit re-runs `update_or_create` for every slot of the semester and resets `is_available=True` on all of them.
 - **No existing tests**: the regression risk is covered only by the new tests plus `schedule_frontend/docs/regression-checklist.md` run against a local backend.
 
@@ -132,3 +132,4 @@ About 3½–4½ working days.
 | 2026-11-20 | `2b6cd1a` | User confirmed decision 3: a confirmed semester edit deletes all lessons, locked ones included. |
 | 2026-11-20 | `2b6cd1a` | User decided to commit migration 0020; its reverse made a no-op. |
 | 2026-11-20 | `a0d0a12` | Added item (i): missing `TimeSlot` unique migration, with dedupe, to phase 0. |
+| 2026-11-20 | `b4a5c3d` | Scope set to local only; production is out of scope and will be updated in full later. |
