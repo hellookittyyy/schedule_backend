@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft 2026-11-20 — not started (phase 0 partly done: `0020` committed) |
+| Status | Backend done 2026-11-20 — phases 0–4 landed (`70b55a6`..`0b4c54f`), `0020`/`0021` applied to the local DB. Frontend follow-up (§5) not started. |
 | Repo | `schedule_backend` (Django + DRF), baseline `813f44b` on branch `api-redesign-gaps` |
 | Source | Open items (a)–(e) of frontend plan [`schedule_frontend/docs/plans/0001-mosaic-redesign.md`](../../../schedule_frontend/docs/plans/0001-mosaic-redesign.md) §10 «Not done / open» |
 | Scope | **Local only.** Work and test against the local backend and `db.sqlite3`. Production is very old and out of scope: it will be updated in full once all the work is done. Push to `main` deploys (`.github/workflows/deploy.yml`), so work stays on branch `api-redesign-gaps` and nothing is pushed or merged to `main`. |
@@ -147,3 +147,4 @@ About 3½–4½ working days.
 | 2026-11-20 | `a0d0a12` | Added item (i): missing `TimeSlot` unique migration, with dedupe, to phase 0. |
 | 2026-11-20 | `b4a5c3d` | Scope set to local only; production is out of scope and will be updated in full later. |
 | 2026-11-20 | `813f44b` | Review rulings: `create()` pops the flag; flag ignored without a re-sync; phases land on `api-redesign-gaps`, not `main`; group delete override removed; `*_id` via `Meta.fields`; handler adds `code` (phase 3 after 2); `restricted_objects`; delete `api/tests.py`; header moved; `0021` renumbers mislabelled slots before deduping true copies; re-sync only on dates/`time_schedule`/`weekends` (A1); forced sync unplaces locked lessons (B1, decision 5). |
+| 2026-11-20 | `c269aef` | Phases 0–4 implemented (`70b55a6`..`0b4c54f`), 31 tests green; `0021` applied locally (slots 985/986 → periods 5/6, no lessons moved). |
