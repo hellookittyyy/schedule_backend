@@ -27,6 +27,7 @@ Found along the way:
 - (g) `SemesterViewSet.sync_slots` with `force_delete` deletes unlocked lessons itself, then calls `synchronize_slots()` without `force_delete`. If any locked lesson remains, it raises → 400. Its pre-check uses `study_plan__semester`, while the model uses `time_slot__semester`.
 - (h) `synchronize_slots()` deletes the time slots that no longer exist (`exclude(id__in=valid_slot_ids)`). `Lesson.time_slot` is `CASCADE`, so **locked** lessons on those slots are deleted silently.
 - `api/tests.py` is empty: there are no tests.
+- (i) Models and migrations have drifted. `TimeSlot.Meta.unique_together = ['semester', 'date', 'period_number']` (added in `53a94e3`) has no migration, so the DB has no such constraint. `makemigrations --check` wants `0021_alter_timeslot_unique_together`. The local DB already has one duplicate: semester 4, 2026-02-13, period 1 → slots 641 (4 lessons), 985 and 986 (no lessons). A plain `AlterUniqueTogether` would fail on `migrate`. The `except TimeSlot.MultipleObjectsReturned` branch in `synchronize_slots()` deletes **all** the duplicates and, through `CASCADE`, their lessons.
 
 ## 3. Decisions
 
@@ -45,9 +46,15 @@ Each phase is one PR into `main` with tests. Phases 1–4 do not depend on each 
 ### Phase 0 — Prep (½ day)
 - Branch from `main`.
 - `0020_add_class_types.py`: commit it (decided by the user 2026-11-20; done, with a no-op reverse). It is idempotent (`get_or_create`) and seeds a fresh DB. On the current local DB it would add nothing new, because «Практична» already exists. Its reverse deletes the 4 names; make the reverse a no-op so that rolling back never deletes class types that study plans use (`PROTECT`).
+- Migration `0021` for the `TimeSlot` unique constraint (item i), in one migration file:
+  1. `RunPython` dedupe: for each `(semester, date, period_number)` group with more than one slot, keep the slot with the most lessons (tie → lowest id). Move the other slots' lessons to it. If a moved lesson would break `Lesson.unique_together (room, time_slot)`, set its `time_slot` to `NULL` (unplaced) instead of deleting it. Then delete the empty duplicates. Log the counts. Reverse: no-op.
+  2. `AlterUniqueTogether(name='timeslot', unique_together={('semester', 'date', 'period_number')})`.
+  - Remove the `MultipleObjectsReturned` branch from `synchronize_slots()`. It can no longer happen, and it deleted lessons.
+  - Before the deploy: run the duplicate query on the production DB (`SELECT semester_id, date, period_number, COUNT(*) FROM api_timeslot GROUP BY 1,2,3 HAVING COUNT(*) > 1`) and take a DB backup. `deploy.yml` runs `migrate` on push.
+  - Test: two duplicate slots with lessons, including a room clash → after migrating, one slot remains, no lesson is deleted, and the clashing lesson is unplaced.
 - Test scaffold: `api/tests/` package with `APITestCase` and small factories (semester with config, group, stream, teacher, subject, class type, room type, room, study plan, lesson). Run with `python manage.py test api`.
 
-**Done when:** the migration decision is committed, the scaffold runs green, and CI/deploy is unchanged.
+**Done when:** `0020` is committed, `0021` applies cleanly on a copy of the local DB, `makemigrations --check` is clean, the scaffold runs green, and CI/deploy is unchanged.
 
 ### Phase 1 — Class types route, `current` import (¼ day) — items b, f
 - `api/urls.py`: `router.register(r'class_types', ClassTypeViewSet, basename='class_type')` plus the existing `class-types` registration as an alias.
@@ -109,7 +116,7 @@ Each phase is one PR into `main` with tests. Phases 1–4 do not depend on each 
 
 ## 7. Risks
 
-- **Deploy on push to `main`**: each phase goes live at once, with `migrate`. Only phase 0 has a migration (data only).
+- **Deploy on push to `main`**: each phase goes live at once, with `migrate`. Only phase 0 has migrations: `0020` (data only) and `0021` (dedupe + unique constraint; back up the production DB first).
 - **Frontend contract**: all changes are additive. The one behaviour change is a name-only semester edit, which no longer rebuilds slots. Today such an edit re-runs `update_or_create` for every slot of the semester and resets `is_available=True` on all of them.
 - **No existing tests**: the regression risk is covered only by the new tests plus `schedule_frontend/docs/regression-checklist.md` run against a local backend.
 
@@ -124,3 +131,4 @@ About 3½–4½ working days.
 | 2026-11-20 | `2b6cd1a` | First draft from frontend plan 0001 §10 (a)–(e), causes checked in code. |
 | 2026-11-20 | `2b6cd1a` | User confirmed decision 3: a confirmed semester edit deletes all lessons, locked ones included. |
 | 2026-11-20 | `2b6cd1a` | User decided to commit migration 0020; its reverse made a no-op. |
+| 2026-11-20 | `a0d0a12` | Added item (i): missing `TimeSlot` unique migration, with dedupe, to phase 0. |
