@@ -3,10 +3,6 @@ from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from api.models import Group, Stream
 from api.serializers import GroupSerializer, StreamSerializer
-from django.db.models import ProtectedError
-from django.db import IntegrityError
-from rest_framework import status
-from rest_framework.response import Response
 
 class GroupViewSet(viewsets.ModelViewSet):
     serializer_class = GroupSerializer
@@ -44,15 +40,6 @@ class GroupViewSet(viewsets.ModelViewSet):
                 raise ValidationError("Параметр course має бути числом")
 
         return queryset
-
-    def destroy(self, request, *args, **kwargs):
-        try:
-            return super().destroy(request, *args, **kwargs)
-        except (ProtectedError, IntegrityError):
-            return Response(
-                {"error": "Не можна видалити групу, оскільки вона є частиною навчального плану або використовується в інших записах."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
 class StreamViewSet(viewsets.ModelViewSet):
     queryset = Stream.objects.all()

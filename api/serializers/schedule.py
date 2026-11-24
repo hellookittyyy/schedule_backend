@@ -1,4 +1,6 @@
+from django.db import transaction
 from rest_framework import serializers
+from api.exceptions import ScheduleExists
 from api.models import Semester, TimeSlot, SemesterConstraint, Lesson, StudyPlan, Room
 
 class TimeSlotSerializer(serializers.ModelSerializer):
@@ -24,37 +26,98 @@ class StudyPlanDepthSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = StudyPlan
-        fields = ['id', 'subject', 'teacher', 'group', 'stream', 'class_type', 'duration']
+        fields = [
+            'id', 'subject', 'teacher', 'group', 'stream', 'class_type', 'duration',
+            'group_id', 'stream_id', 'teacher_id', 'subject_id', 'class_type_id',
+        ]
+
+
+def normalize_semester_config(config):
+    """Return ``(time_schedule, weekends)`` from a semester configuration dict."""
+    config = config or {}
+    if 'generation_config' in config:
+        config = config['generation_config'] or {}
+    return config.get('time_schedule') or [], config.get('weekends') or []
+
 
 class SemesterSerializer(serializers.ModelSerializer):
     generation_config = serializers.JSONField(write_only=True, required=False)
+    confirm_schedule_deletion = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = Semester
-        fields = ['id', 'name', 'start_date', 'end_date', 'configuration', 'generation_config', 'is_current']
+        fields = [
+            'id', 'name', 'start_date', 'end_date', 'configuration',
+            'generation_config', 'confirm_schedule_deletion', 'is_current',
+        ]
         read_only_fields = ['configuration']
 
     def create(self, validated_data):
+        validated_data.pop('confirm_schedule_deletion', False)
         config = validated_data.pop('generation_config', {})
         validated_data['configuration'] = config
-        
+
         semester = super().create(validated_data)
 
         if config:
             semester.synchronize_slots()
-            
+
         return semester
 
+    def _slot_inputs(self, instance, validated_data, config, has_config):
+        """Slot-affecting inputs: dates plus the normalised schedule/weekends."""
+        if has_config:
+            new_config = config
+        else:
+            new_config = instance.configuration
+
+        time_schedule, weekends = normalize_semester_config(new_config)
+        return (
+            validated_data.get('start_date', instance.start_date),
+            validated_data.get('end_date', instance.end_date),
+            time_schedule,
+            weekends,
+        )
+
     def update(self, instance, validated_data):
-        if 'generation_config' in validated_data:
-             config = validated_data.pop('generation_config')
-             validated_data['configuration'] = config
-        
+        confirm = validated_data.pop('confirm_schedule_deletion', False)
+        has_config = 'generation_config' in validated_data
+        config = validated_data.pop('generation_config', None)
+
+        time_schedule, weekends = normalize_semester_config(instance.configuration)
+        old_inputs = (instance.start_date, instance.end_date, time_schedule, weekends)
+        new_inputs = self._slot_inputs(instance, validated_data, config, has_config)
+        resync = old_inputs != new_inputs
+
+        if has_config:
+            validated_data['configuration'] = config or {}
+
+        if not resync:
+            return super().update(instance, validated_data)
+
+        lessons = Lesson.objects.filter(study_plan__semester=instance)
+        if lessons.exists():
+            if not confirm:
+                # Нічого не зберігаємо: дати, слоти й заняття лишаються як були.
+                raise ScheduleExists()
+
+            with transaction.atomic():
+                deleted_count = lessons.delete()[0]
+                instance = super().update(instance, validated_data)
+                instance.synchronize_slots(force_delete=True)
+                instance.deleted_lessons = deleted_count
+            return instance
+
         instance = super().update(instance, validated_data)
-        
         instance.synchronize_slots()
-        
         return instance
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        deleted_lessons = getattr(instance, 'deleted_lessons', None)
+        if deleted_lessons is not None:
+            data['deleted_lessons'] = deleted_lessons
+        return data
 
 
 class SemesterConstraintSerializer(serializers.ModelSerializer):
